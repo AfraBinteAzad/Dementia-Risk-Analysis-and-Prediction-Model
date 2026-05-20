@@ -9,10 +9,11 @@ df <- read_excel("C:/Users/User/Desktop/Dementia Risk Prediction Model/dataset.x
 head(df)
 
 colnames(df)
-df
+
+
 
 #EDA
-categorical <- c("Education_ID","Mobility","MNAa_q3","Hyperlipidaemia","MMSE_class")
+categorical <- c("Education_ID","Mobility","MNAa_q3","Hyperlipidemia","MMSE_class")
 continous <- c("Age","body_height","body_weight","MNAb_tot","waist","MNAa_tot")
 
 df %>% select(all_of( categorical)) %>%  map(table)
@@ -25,17 +26,53 @@ df %>% select(all_of( continous)) %>%
   }
   )
 
-#Target variable distribution
 
-target_distribution <- 
-  ggplot(df, aes(x = MMSE_class, fill = factor(MMSE_class))) +
-  geom_bar() +
-  ggtitle("Distribution of MMSE Class")
+#categorical value distribution graph
 
-target_distribution
+cat_plot <- function(data, category) {
+  data %>%
+    filter(!is.na(MMSE_class), !is.na(.data[[category]])) %>%
+    ggplot(aes(
+      x = factor(.data[[category]]),
+      fill = factor(MMSE_class)
+    )) +
+    geom_bar() +
+    xlab(category) +
+    ggtitle(paste("Distribution of", category))
+}
+
+all_cat_plots <- map(categorical, ~ cat_plot(df, .x))
+all_cat_plots
+
+
+#continous value distribution graph
+
+cont_plot <- function(data, conti) {
+  data %>%
+    filter(!is.na(.data[[conti]]), !is.na(MMSE_class)) %>%
+    ggplot(
+      aes(
+        x = .data[[conti]],
+        fill = factor(MMSE_class)
+      )
+    ) +
+    geom_histogram(bins = 30,position = "identity") +
+    labs(
+      title = paste("Distribution of", conti),
+      x = conti,
+      y = "Frequency",
+      fill = "MMSE Class"
+    ) 
+}
+
+all_cont_plots <- map(continous, ~ cont_plot(df, .x))
+all_cont_plots
+
+
 
 #Null Value Handling:
-
+df <- df %>% select(-ID)
+colnames(df)
 colSums(is.na(df))
 round(colMeans(is.na(df))*100,2)
 total_missingness <- sum(is.na(df))/(nrow(df)*ncol(df))*100
@@ -45,12 +82,15 @@ missing_df <- data.frame(
   Variable = names(df),
   MissingPercent = round(colMeans(is.na(df)) * 100, 2)
 )
+
 ggplot(missing_df, aes(x = reorder(Variable, -MissingPercent), 
-                       y = MissingPercent)) +
+                            y = MissingPercent)) +
   geom_col(fill = "steelblue") +
   labs(title = "Percentage of Missing Values per Variable",
        x = "Variable",
        y = "Missing (%)")
+
+
 missmap(df,main="Missing Map",col=c('yellow','black'),Legend=FALSE)
 
 #data imputation
@@ -84,7 +124,7 @@ df <- df %>% mutate(
                  levels = c(0,1,2),
                  labels = c('Bedridden','Cannot go out','Independent')
   ),
-  Hyperlipidaemia=factor(Hyperlipidaemia,
+  Hyperlipidemia=factor(Hyperlipidemia,
                          levels = c(0,1),
                          labels = c('No','Yes')
   ),
@@ -93,13 +133,220 @@ df <- df %>% mutate(
                     labels = c('Not at risk','At risk')
   )
 )
-
+str(df)
 
 #feature engineering
 df <- df %>% mutate(
   BMI= body_weight/(body_height/100)^2
 )
-df$BMI
+
+continous <- c("Age","body_height","body_weight","MNAb_tot","waist","MNAa_tot","BMI")
 
 str(df) 
-summary(df)
+
+corr = df %>% select_if(is.numeric) %>% 
+  cor(., method = "spearman") %>% round(3) 
+
+corr %>% write.csv("corr.csv") 
+
+corr
+library(corrplot)
+corrplot(corr, method = "color", type = "upper", tl.col = "black", tl.srt = 45)
+
+df_scale <- df %>% mutate(across(all_of(continous), ~ as.numeric(scale(.x)))) 
+df_scale
+df_clean <-df
+
+library(caret)
+
+set.seed(123)
+train_index <- sample(nrow(df_scale),0.7 * nrow(df_scale))
+
+train_clean <- df_clean[train_index, ]
+test_clean  <- df_clean[-train_index, ]
+
+train_scaled <- df_scale[train_index, ]
+test_scaled  <- df_scale[-train_index, ]
+
+
+#model building
+
+library(randomForest)
+library(e1071)
+library(pROC)
+library(class)
+
+
+
+
+#random forest
+set.seed(123)
+rf_base <- randomForest(MMSE_class ~ ., data = train_clean)
+rf_base_pred <- predict(rf_base, test_clean)
+rf_base_cm <- confusionMatrix(rf_base_pred, test_clean$MMSE_class)
+rf_base_cm
+
+#svm
+set.seed(123)
+svm_base <- svm(MMSE_class ~ ., data = train_scaled,
+                kernel = "radial", probability = TRUE)
+
+svm_base_pred <- predict(svm_base, test_scaled, probability = TRUE)
+
+svm_base_cm <- confusionMatrix(svm_base_pred, test_scaled$MMSE_class)
+svm_base_cm
+
+
+# RF baseline
+rf_base_acc <- as.numeric(rf_base_cm$overall["Accuracy"])
+rf_base_prec <- as.numeric(rf_base_cm$byClass["Precision"])
+rf_base_rec <- as.numeric(rf_base_cm$byClass["Recall"])
+rf_base_f1 <- as.numeric(rf_base_cm$byClass["F1"])
+
+# SVM baseline
+svm_base_acc <- as.numeric(svm_base_cm$overall["Accuracy"])
+svm_base_prec <- as.numeric(svm_base_cm$byClass["Precision"])
+svm_base_rec <- as.numeric(svm_base_cm$byClass["Recall"])
+svm_base_f1 <- as.numeric(svm_base_cm$byClass["F1"])
+
+
+# RF probabilities
+rf_base_prob <- predict(rf_base, test_clean, type = "prob")[, "At risk"]
+
+# SVM probabilities
+svm_base_prob <- attr(svm_base_pred, "probabilities")[, "At risk"]
+
+# ROC
+rf_base_roc <- roc(test_clean$MMSE_class, rf_base_prob)
+svm_base_roc <- roc(test_scaled$MMSE_class, svm_base_prob)
+
+# AUC
+rf_base_auc <- as.numeric(auc(rf_base_roc))
+svm_base_auc <- as.numeric(auc(svm_base_roc))
+
+
+# Create table
+results_baseline <- data.frame(
+  Model = c("Random Forest (Baseline)", "SVM (Baseline)"),
+  Accuracy = round(c(rf_base_acc, svm_base_acc), 3),
+  Precision = round(c(rf_base_prec, svm_base_prec), 3),
+  Recall = round(c(rf_base_rec, svm_base_rec), 3),
+  F1_Score = round(c(rf_base_f1, svm_base_f1), 3),
+  AUC = round(c(rf_base_auc, svm_base_auc), 3)
+)
+
+results_baseline
+
+
+#improved model 
+set.seed(123)
+rf_imp <- randomForest(
+  MMSE_class ~ Age + MNAa_tot + MNAb_tot + BMI +
+    Education_ID + Mobility + MNAa_q3 + waist+Hyperlipidemia,
+  data = train_clean
+)
+
+rf_imp_pred <- predict(rf_imp, test_clean)
+
+rf_imp_cm <- confusionMatrix(rf_imp_pred, test_clean$MMSE_class)
+rf_imp_cm
+
+
+set.seed(123)
+svm_imp <- svm(
+  MMSE_class ~ Age + MNAa_tot + MNAb_tot + BMI +
+    Education_ID + Mobility + MNAa_q3 + waist+Hyperlipidemia,
+  data = train_scaled,
+  kernel = "radial",
+  probability = TRUE
+)
+
+svm_imp_pred <- predict(svm_imp, test_scaled, probability = TRUE)
+
+svm_imp_cm <- confusionMatrix(svm_imp_pred, test_scaled$MMSE_class)
+svm_imp_cm
+
+
+# RF improved 
+rf_imp_acc <- as.numeric(rf_imp_cm$overall["Accuracy"])
+rf_imp_prec <- as.numeric(rf_imp_cm$byClass["Precision"])
+rf_imp_rec <- as.numeric(rf_imp_cm$byClass["Recall"])
+rf_imp_f1 <- as.numeric(rf_imp_cm$byClass["F1"])
+
+# SVM improved
+svm_imp_acc <- as.numeric(svm_imp_cm$overall["Accuracy"])
+svm_imp_prec <- as.numeric(svm_imp_cm$byClass["Precision"])
+svm_imp_rec <- as.numeric(svm_imp_cm$byClass["Recall"])
+svm_imp_f1 <- as.numeric(svm_imp_cm$byClass["F1"])
+
+
+rf_imp_prob <- predict(rf_imp, test_clean, type = "prob")[, "At risk"]
+svm_imp_prob <- attr(svm_imp_pred, "probabilities")[, "At risk"]
+
+rf_imp_roc <- roc(test_clean$MMSE_class, rf_imp_prob)
+svm_imp_roc <- roc(test_scaled$MMSE_class, svm_imp_prob)
+
+rf_imp_auc <- as.numeric(auc(rf_imp_roc))
+svm_imp_auc <- as.numeric(auc(svm_imp_roc))
+
+
+# Create table
+results_imp <- data.frame(
+  Model = c("Random Forest (Improved)", "SVM (Improved)"),
+  Accuracy = round(c(rf_imp_acc, svm_imp_acc), 3),
+  Precision = round(c(rf_imp_prec, svm_imp_prec), 3),
+  Recall = round(c(rf_imp_rec, svm_imp_rec), 3),
+  F1_Score = round(c(rf_imp_f1, svm_imp_f1), 3),
+  AUC = round(c(rf_imp_auc, svm_imp_auc), 3)
+)
+
+results_imp
+
+
+# Baseline ROC Curve
+plot(rf_base_roc,
+     col = "blue",
+     lwd = 3,
+     main = "ROC Curve - Baseline Models",
+     legacy.axes = TRUE)
+
+plot(svm_base_roc,
+     col = "red",
+     lwd = 3,
+     add = TRUE)
+
+abline(a = 0, b = 1, lty = 2, col = "gray")
+
+legend("bottomright",
+       legend = c(
+         paste("Random Forest (AUC =", round(rf_base_auc, 3), ")"),
+         paste("SVM (AUC =", round(svm_base_auc, 3), ")")
+       ),
+       col = c("blue", "red"),
+       lwd = 3,
+       bty = "n")
+
+
+# Final (Improved) ROC Curve
+plot(rf_imp_roc,
+     col = "blue",
+     lwd = 3,
+     main = "ROC Curve - Reduced Feature Models",
+     legacy.axes = TRUE)
+
+plot(svm_imp_roc,
+     col = "red",
+     lwd = 3,
+     add = TRUE)
+
+abline(a = 0, b = 1, lty = 2, col = "gray")
+
+legend("bottomright",
+       legend = c(
+         paste("Random Forest (AUC =", round(rf_imp_auc, 3), ")"),
+         paste("SVM (AUC =", round(svm_imp_auc, 3), ")")
+       ),
+       col = c("blue", "red"),
+       lwd = 3,
+       bty = "n")
+
