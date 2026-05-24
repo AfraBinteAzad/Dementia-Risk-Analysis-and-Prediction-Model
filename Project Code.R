@@ -31,7 +31,6 @@ df %>% select(all_of( continous)) %>%
 
 cat_plot <- function(data, category) {
   data %>%
-    filter(!is.na(MMSE_class), !is.na(.data[[category]])) %>%
     ggplot(aes(
       x = factor(.data[[category]]),
       fill = factor(MMSE_class)
@@ -49,7 +48,6 @@ all_cat_plots
 
 cont_plot <- function(data, conti) {
   data %>%
-    filter(!is.na(.data[[conti]]), !is.na(MMSE_class)) %>%
     ggplot(
       aes(
         x = .data[[conti]],
@@ -135,14 +133,7 @@ df <- df %>% mutate(
 )
 str(df)
 
-#feature engineering
-df <- df %>% mutate(
-  BMI= body_weight/(body_height/100)^2
-)
-
-continous <- c("Age","body_height","body_weight","MNAb_tot","waist","MNAa_tot","BMI")
-
-str(df) 
+ 
 
 corr = df %>% select_if(is.numeric) %>% 
   cor(., method = "spearman") %>% round(3) 
@@ -155,7 +146,7 @@ corrplot(corr, method = "color", type = "upper", tl.col = "black", tl.srt = 45)
 
 df_scale <- df %>% mutate(across(all_of(continous), ~ as.numeric(scale(.x)))) 
 df_scale
-df_clean <-df
+df_clean <- df
 
 library(caret)
 
@@ -181,136 +172,71 @@ library(class)
 
 #random forest
 set.seed(123)
-rf_base <- randomForest(MMSE_class ~ ., data = train_clean)
-rf_base_pred <- predict(rf_base, test_clean)
-rf_base_cm <- confusionMatrix(rf_base_pred, test_clean$MMSE_class)
-rf_base_cm
+rf <- randomForest(MMSE_class ~ ., data = train_clean)
+rf_pred <- predict(rf, test_clean)
+rf_cm <- confusionMatrix(rf_pred, test_clean$MMSE_class)
+rf_cm
 
 #svm
 set.seed(123)
-svm_base <- svm(MMSE_class ~ ., data = train_scaled,
+svm <- svm(MMSE_class ~ ., data = train_scaled,
                 kernel = "radial", probability = TRUE)
-
-svm_base_pred <- predict(svm_base, test_scaled, probability = TRUE)
-
-svm_base_cm <- confusionMatrix(svm_base_pred, test_scaled$MMSE_class)
-svm_base_cm
+svm_pred <- predict(svm, test_scaled, probability = TRUE)
+svm_cm <- confusionMatrix(svm_pred, test_scaled$MMSE_class)
+svm_cm
 
 
 # RF baseline
-rf_base_acc <- as.numeric(rf_base_cm$overall["Accuracy"])
-rf_base_prec <- as.numeric(rf_base_cm$byClass["Precision"])
-rf_base_rec <- as.numeric(rf_base_cm$byClass["Recall"])
-rf_base_f1 <- as.numeric(rf_base_cm$byClass["F1"])
+rf_acc <- as.numeric(rf_cm$overall["Accuracy"])
+rf_prec <- as.numeric(rf_cm$byClass["Precision"])
+rf_rec <- as.numeric(rf_cm$byClass["Recall"])
+rf_f1 <- as.numeric(rf_cm$byClass["F1"])
 
 # SVM baseline
-svm_base_acc <- as.numeric(svm_base_cm$overall["Accuracy"])
-svm_base_prec <- as.numeric(svm_base_cm$byClass["Precision"])
-svm_base_rec <- as.numeric(svm_base_cm$byClass["Recall"])
-svm_base_f1 <- as.numeric(svm_base_cm$byClass["F1"])
+svm_acc <- as.numeric(svm_cm$overall["Accuracy"])
+svm_prec <- as.numeric(svm_cm$byClass["Precision"])
+svm_rec <- as.numeric(svm_cm$byClass["Recall"])
+svm_f1 <- as.numeric(svm_cm$byClass["F1"])
 
 
 # RF probabilities
-rf_base_prob <- predict(rf_base, test_clean, type = "prob")[, "At risk"]
+rf_prob <- predict(rf, test_clean, type = "prob")[, "At risk"]
 
 # SVM probabilities
-svm_base_prob <- attr(svm_base_pred, "probabilities")[, "At risk"]
+svm_prob <- attr(svm_pred, "probabilities")[, "At risk"]
 
 # ROC
-rf_base_roc <- roc(test_clean$MMSE_class, rf_base_prob)
-svm_base_roc <- roc(test_scaled$MMSE_class, svm_base_prob)
+rf_roc <- roc(test_clean$MMSE_class, rf_prob)
+svm_roc <- roc(test_scaled$MMSE_class, svm_prob)
 
 # AUC
-rf_base_auc <- as.numeric(auc(rf_base_roc))
-svm_base_auc <- as.numeric(auc(svm_base_roc))
+rf_auc <- as.numeric(auc(rf_roc))
+svm_auc <- as.numeric(auc(svm_roc))
 
 
 # Create table
-results_baseline <- data.frame(
+results <- data.frame(
   Model = c("Random Forest (Baseline)", "SVM (Baseline)"),
-  Accuracy = round(c(rf_base_acc, svm_base_acc), 3),
-  Precision = round(c(rf_base_prec, svm_base_prec), 3),
-  Recall = round(c(rf_base_rec, svm_base_rec), 3),
-  F1_Score = round(c(rf_base_f1, svm_base_f1), 3),
-  AUC = round(c(rf_base_auc, svm_base_auc), 3)
+  Accuracy = round(c(rf_acc, svm_acc), 3),
+  Precision = round(c(rf_prec, svm_prec), 3),
+  Recall = round(c(rf_rec, svm_rec), 3),
+  F1_Score = round(c(rf_f1, svm_f1), 3),
+  AUC = round(c(rf_auc, svm_auc), 3)
 )
 
-results_baseline
+results
 
 
-#improved model 
-set.seed(123)
-rf_imp <- randomForest(
-  MMSE_class ~ Age + MNAa_tot + MNAb_tot + BMI +
-    Education_ID + Mobility + MNAa_q3 + waist+Hyperlipidemia,
-  data = train_clean
-)
-
-rf_imp_pred <- predict(rf_imp, test_clean)
-
-rf_imp_cm <- confusionMatrix(rf_imp_pred, test_clean$MMSE_class)
-rf_imp_cm
-
-
-set.seed(123)
-svm_imp <- svm(
-  MMSE_class ~ Age + MNAa_tot + MNAb_tot + BMI +
-    Education_ID + Mobility + MNAa_q3 + waist+Hyperlipidemia,
-  data = train_scaled,
-  kernel = "radial",
-  probability = TRUE
-)
-
-svm_imp_pred <- predict(svm_imp, test_scaled, probability = TRUE)
-
-svm_imp_cm <- confusionMatrix(svm_imp_pred, test_scaled$MMSE_class)
-svm_imp_cm
-
-
-# RF improved 
-rf_imp_acc <- as.numeric(rf_imp_cm$overall["Accuracy"])
-rf_imp_prec <- as.numeric(rf_imp_cm$byClass["Precision"])
-rf_imp_rec <- as.numeric(rf_imp_cm$byClass["Recall"])
-rf_imp_f1 <- as.numeric(rf_imp_cm$byClass["F1"])
-
-# SVM improved
-svm_imp_acc <- as.numeric(svm_imp_cm$overall["Accuracy"])
-svm_imp_prec <- as.numeric(svm_imp_cm$byClass["Precision"])
-svm_imp_rec <- as.numeric(svm_imp_cm$byClass["Recall"])
-svm_imp_f1 <- as.numeric(svm_imp_cm$byClass["F1"])
-
-
-rf_imp_prob <- predict(rf_imp, test_clean, type = "prob")[, "At risk"]
-svm_imp_prob <- attr(svm_imp_pred, "probabilities")[, "At risk"]
-
-rf_imp_roc <- roc(test_clean$MMSE_class, rf_imp_prob)
-svm_imp_roc <- roc(test_scaled$MMSE_class, svm_imp_prob)
-
-rf_imp_auc <- as.numeric(auc(rf_imp_roc))
-svm_imp_auc <- as.numeric(auc(svm_imp_roc))
-
-
-# Create table
-results_imp <- data.frame(
-  Model = c("Random Forest (Improved)", "SVM (Improved)"),
-  Accuracy = round(c(rf_imp_acc, svm_imp_acc), 3),
-  Precision = round(c(rf_imp_prec, svm_imp_prec), 3),
-  Recall = round(c(rf_imp_rec, svm_imp_rec), 3),
-  F1_Score = round(c(rf_imp_f1, svm_imp_f1), 3),
-  AUC = round(c(rf_imp_auc, svm_imp_auc), 3)
-)
-
-results_imp
 
 
 # Baseline ROC Curve
-plot(rf_base_roc,
+plot(rf_roc,
      col = "blue",
      lwd = 3,
-     main = "ROC Curve - Baseline Models",
+     main = "ROC Curve - SVM and Random Forest Model",
      legacy.axes = TRUE)
 
-plot(svm_base_roc,
+plot(svm_roc,
      col = "red",
      lwd = 3,
      add = TRUE)
@@ -319,32 +245,8 @@ abline(a = 0, b = 1, lty = 2, col = "gray")
 
 legend("bottomright",
        legend = c(
-         paste("Random Forest (AUC =", round(rf_base_auc, 3), ")"),
-         paste("SVM (AUC =", round(svm_base_auc, 3), ")")
-       ),
-       col = c("blue", "red"),
-       lwd = 3,
-       bty = "n")
-
-
-# Final (Improved) ROC Curve
-plot(rf_imp_roc,
-     col = "blue",
-     lwd = 3,
-     main = "ROC Curve - Reduced Feature Models",
-     legacy.axes = TRUE)
-
-plot(svm_imp_roc,
-     col = "red",
-     lwd = 3,
-     add = TRUE)
-
-abline(a = 0, b = 1, lty = 2, col = "gray")
-
-legend("bottomright",
-       legend = c(
-         paste("Random Forest (AUC =", round(rf_imp_auc, 3), ")"),
-         paste("SVM (AUC =", round(svm_imp_auc, 3), ")")
+         paste("Random Forest (AUC =", round(rf_auc, 3), ")"),
+         paste("SVM (AUC =", round(svm_auc, 3), ")")
        ),
        col = c("blue", "red"),
        lwd = 3,
